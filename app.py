@@ -513,6 +513,16 @@ def generate_report(excel_bytes, progress_cb=None):
         print(f"[INFO] Gaps detectados en {len(nan_cols)} fondo(s) — aplicando forward-fill + backward-fill")
     df = df.ffill().bfill()
 
+    # Eliminar columnas completamente vacías o con datos insuficientes
+    cols_empty = [c for c in df.columns if df[c].isna().all()]
+    if cols_empty:
+        print(f"[WARN] Eliminando columnas sin datos: {cols_empty}")
+        df = df.drop(columns=cols_empty)
+    cols_short = [c for c in df.columns if df[c].notna().sum() < 2]
+    if cols_short:
+        print(f"[WARN] Eliminando columnas con datos insuficientes: {cols_short}")
+        df = df.drop(columns=cols_short)
+
     fund_codes = df.columns.tolist()
     name_map = dict(zip(meta["Codigo"].astype(str).str[:7], meta["Nombre"]))
     isin_map = {}
