@@ -506,7 +506,12 @@ def generate_report(excel_bytes, progress_cb=None):
     df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
     df.set_index(df.columns[0], inplace=True)
     df.sort_index(inplace=True)
-    df.ffill(inplace=True)
+   # Detectar gaps antes de rellenar
+    nan_cols = df.isna().sum()
+    nan_cols = nan_cols[nan_cols > 0]
+    if len(nan_cols) > 0:
+        print(f"[INFO] Gaps detectados en {len(nan_cols)} fondo(s) — aplicando forward-fill + backward-fill")
+    df = df.ffill().bfill()
 
     fund_codes = df.columns.tolist()
     name_map = dict(zip(meta["Codigo"].astype(str).str[:7], meta["Nombre"]))
