@@ -81,8 +81,10 @@ def get_gbp_usd_rate():
     try:
         ticker = yf.Ticker("GBPUSD=X")
         hist = ticker.history(period="5d")
-        if not hist.empty:
-            return float(hist["Close"].dropna().iloc[-1])
+        if hist is not None and not hist.empty:
+            closes = hist["Close"].dropna()
+            if len(closes) > 0:
+                return float(closes.iloc[-1])
     except Exception:
         pass
     return 1.28
@@ -578,6 +580,12 @@ def generate_report(excel_bytes, progress_cb=None):
         else:
             raise ValueError("No FRED key — using flat fallback")
     except Exception:
+        rf_daily = pd.Series(0.04 / 252, index=daily.index)
+
+    # Ensure rf_daily aligns with daily index — fill any gaps
+    if isinstance(rf_daily, pd.Series):
+        rf_daily = rf_daily.reindex(daily.index, method="ffill").fillna(0.04 / 252)
+    else:
         rf_daily = pd.Series(0.04 / 252, index=daily.index)
 
     ann_bm = rr5_df.loc[display_names[0], "Retorno"]
