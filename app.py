@@ -111,9 +111,12 @@ def parse_fund_size(text):
 
 
 def get_ft_data(isin):
+    """Extrae ratings, fund size y launch date de Financial Times"""
     try:
+        # Ratings desde página de ratings
         ratings_url = f"https://markets.ft.com/data/funds/tearsheet/ratings?s={isin}:USD"
-        resp = requests.get(ratings_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        resp = requests.get(ratings_url, timeout=10)
+        print(f"DEBUG FT: ISIN={isin} | status={resp.status_code} | len={len(resp.text)}", flush=True)
         soup = BeautifulSoup(resp.text, "html.parser")
 
         ms_stars = category = None
