@@ -49,6 +49,22 @@ JOBS = {}           # job_id → {"status", "pdf_bytes", "error", "progress"}
 JOBS_LOCK = threading.Lock()
 
 # ─────────────────────────────────────────────
+# HTTP headers para evitar bloqueo de FT
+# ─────────────────────────────────────────────
+FT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+# ─────────────────────────────────────────────
 # Estilos globales matplotlib
 # ─────────────────────────────────────────────
 palette = [
@@ -115,12 +131,13 @@ def get_ft_data(isin):
     try:
         # Ratings desde página de ratings
         ratings_url = f"https://markets.ft.com/data/funds/tearsheet/ratings?s={isin}:USD"
-        resp = requests.get(ratings_url, timeout=10)
-        print(f"DEBUG FT: ISIN={isin} | status={resp.status_code} | len={len(resp.text)}", flush=True)
+        resp = requests.get(ratings_url, timeout=15, headers=FT_HEADERS)
+        print(f"DEBUG FT ratings: ISIN={isin} | status={resp.status_code} | len={len(resp.text)}", flush=True)
         soup = BeautifulSoup(resp.text, "html.parser")
 
         ms_stars = category = None
         ms_app = soup.find("div", {"data-module-name": "MorningstarRatingApp"})
+        print(f"DEBUG FT ratings: ISIN={isin} | ms_app_found={ms_app is not None}", flush=True)
         if ms_app:
             highlighted = ms_app.select_one("span[data-mod-stars-highlighted]")
             ms_stars = len(highlighted.find_all("i", class_="mod-icon--star--filled")) if highlighted else None
@@ -131,6 +148,7 @@ def get_ft_data(isin):
 
         lr_rating = None
         lr_app = soup.find("div", {"data-module-name": "LipperRatingApp"})
+        print(f"DEBUG FT ratings: ISIN={isin} | lr_app_found={lr_app is not None}", flush=True)
         if lr_app:
             tbl = lr_app.find("table", class_="mod-ui-table")
             if tbl and tbl.thead and tbl.tbody:
@@ -151,11 +169,14 @@ def get_ft_data(isin):
                             break
 
         summary_url = f"https://markets.ft.com/data/funds/tearsheet/summary?s={isin}:USD"
-        resp2 = requests.get(summary_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        resp2 = requests.get(summary_url, timeout=15, headers=FT_HEADERS)
+        print(f"DEBUG FT summary: ISIN={isin} | status={resp2.status_code} | len={len(resp2.text)}", flush=True)
         soup2 = BeautifulSoup(resp2.text, "html.parser")
 
         fund_size_usd = launch_date = None
-        for tbl in soup2.find_all("table", class_="mod-ui-table--two-column"):
+        two_col_tables = soup2.find_all("table", class_="mod-ui-table--two-column")
+        print(f"DEBUG FT summary: ISIN={isin} | two_col_tables_found={len(two_col_tables)}", flush=True)
+        for tbl in two_col_tables:
             for row in tbl.find_all("tr"):
                 th = row.find("th")
                 if th:
@@ -169,9 +190,10 @@ def get_ft_data(isin):
                             launch_date = content
                             break
 
+        print(f"DEBUG FT result: ISIN={isin} | stars={ms_stars} | cat={category} | lipper={lr_rating} | size={fund_size_usd} | launch={launch_date}", flush=True)
         return ms_stars, category, lr_rating, fund_size_usd, launch_date
     except Exception as e:
-        print(f"[FT] Error ISIN {isin}: {e}")
+        print(f"[FT] Error ISIN {isin}: {e}", flush=True)
         return None, None, None, None, None
 
 
@@ -506,6 +528,9 @@ def generate_report(excel_bytes, progress_cb=None):
     df = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=0)
     meta = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=1)
 
+    print(f"DEBUG META: columnas={list(meta.columns)}", flush=True)
+    print(f"DEBUG META: primeras filas:\n{meta.head().to_string()}", flush=True)
+
     df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0])
     df.set_index(df.columns[0], inplace=True)
     df.sort_index(inplace=True)
@@ -532,6 +557,12 @@ def generate_report(excel_bytes, progress_cb=None):
     if "ISIN" in meta.columns:
         for _, row in meta.iterrows():
             isin_map[str(row["Codigo"])[:7]] = row["ISIN"]
+    else:
+        print(f"[WARN] No se encontró columna 'ISIN' en metadata. Columnas: {list(meta.columns)}", flush=True)
+
+    print(f"DEBUG MAPS: name_map={name_map}", flush=True)
+    print(f"DEBUG MAPS: isin_map={isin_map}", flush=True)
+    print(f"DEBUG FUND_CODES: {fund_codes}", flush=True)
 
     display_names = [fund_codes[0]] + [name_map.get(c[:7], c) for c in fund_codes[1:]]
     bm_col = fund_codes[0]
@@ -544,10 +575,12 @@ def generate_report(excel_bytes, progress_cb=None):
         ck = fc[:7]
         fn = name_map.get(ck, fc)
         isin = isin_map.get(ck)
+        print(f"DEBUG MAP: fund_code={fc} | code_key={ck} | isin={isin}", flush=True)
         if isin:
             ms, cat, lr, fs, ld = get_ft_data(isin)
             time.sleep(0.5)
         else:
+            print(f"[WARN] ISIN no encontrado para {fn} (code_key={ck})", flush=True)
             ms = cat = lr = fs = ld = None
         ratings_data.append({"Fondo": fn, "ISIN": isin, "MS Stars": ms,
                               "Categoría": cat, "Lipper Rating": lr,
